@@ -1,0 +1,1023 @@
+---
+title: "Part 2"
+format: html
+editor: visual
+---
+
+# Part 2: Sales and Production
+
+## Libraries
+
+```{r}
+#| label: load libraries
+#| warning: false
+#| message: false
+
+library(readr)
+library(knitr)  
+library(kableExtra)
+library(tidyverse)
+library(stringr)
+library(magrittr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(scales)
+```
+
+## Read the file
+
+```{r}
+strawb <- read_csv("strawb_mar6.csv") %>% clean_names()
+
+glimpse(strawb)
+summary(strawb)
+colnames(strawb)
+```
+
+## Data Description
+
+The data originally consisted of 12669 rows and 21 columns.
+
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Column Name      | Description                                                                                                                                                                                          |
++==================+======================================================================================================================================================================================================+
+| program          | How the data was collected — `"SURVEY"` (sample-based) or `"CENSUS"` (population-wide)                                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| year             | The year the data was collected                                                                                                                                                                      |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| period           | Rhe time period for the data (e.g., `"YEAR"`, `"MARKETING YEAR"`, or specific months/quarters). For annual data, this is just `"YEAR"`                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| week_ending      | The specific date marking the end of a reporting week. Often `NA` for annual/census data.                                                                                                            |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| geo_level        | The geographic resolution of the observation — `"STATE"`, `"COUNTY"`, or `"DISTRICT"`                                                                                                                |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| state            | The U.S. state                                                                                                                                                                                       |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| state_ansi       | A numeric code assigned to each U.S. state                                                                                                                                                           |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ag_district      | USDA-defined Agricultural District name                                                                                                                                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ag_district_code | A numeric or letter code assigned to each agricultural district within a state                                                                                                                       |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| county           | The county within U.S. state                                                                                                                                                                         |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| county_ansi      | A 3-digit code for each county within a state. A unique identifier for any U.S. county if combined with `State ANSI`                                                                                 |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| zip_code         | ZIP code of the reporting location                                                                                                                                                                   |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| region           | Regions that group multiple states or counties; often empty or NA for state-level or county-level data                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| watershed_code   | A standardized hydrologic unit code (HUC) for watersheds                                                                                                                                             |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| watershed        | The actual name or label of the watershed                                                                                                                                                            |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| commodity        | The crop being reported; in this dataset, it is always `"STRAWBERRIES"`                                                                                                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| data_item        | A compound descriptor that includes                                                                                                                                                                  |
+|                  |                                                                                                                                                                                                      |
+|                  | 1.  What crop is being measured (always strawberries in this databset)                                                                                                                               |
+|                  | 2.  What aspect is being measured (sales, acres, price, production, etc.),                                                                                                                           |
+|                  | 3.  Measurement unit (e.g., “MEASURED IN \$”),                                                                                                                                                       |
+|                  | 4.  Whether it’s organic, fresh market, or processing.                                                                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| domain           | A subcategory that breaks down the data by chemical used, type of farming (`“ORGANIC”`, `"FERTILIZER"`, `"CHEMICAL"`), or `"TOTAL"`. Often shows the chemical name if domain_category is “CHEMICAL”. |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| domain_category  | The category of the domain — e.g., `"CHEMICAL"`, `"ORGANIC"`, `"FERTILIZER"`, etc. `"CHEMICAL"` and `"FERTILIZER"` usage indicates conventional farming                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| value            | The numerical measurement — could be pounds of chemical, dollars in sales, price per cwt, etc., depending on the type_of_measurement.                                                                |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| cv_percent       | Coefficient of Variation — a measure of data reliability or variability.                                                                                                                             |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+## Data Cleaning
+
+### Remove columns with a single value in all columns
+
+```{r}
+remove_single_value_columns <- function(df) {
+  df %>%
+    select(where(~ n_distinct(.) > 1))
+}
+```
+
+```{r}
+strawb_cleaned <- remove_single_value_columns(strawb)
+
+# Checking which columns are dropped
+removed_columns <- setdiff(names(strawb), names(strawb_cleaned))
+print(removed_columns)
+
+strawb_cleaned
+```
+
+### Splitting data into smaller data sets
+
+The Strawberry data set is split into two smaller sets according to which program is used to collect the data: `census` and `survey`.
+
+#### census
+
+```{r}
+census <- strawb_cleaned %>%
+    filter(program == "CENSUS")
+
+census <- drop_one_value_col(census)
+census <- census |> select(-`state_ansi`)
+
+names(census)
+unique(census$commodity)
+
+census
+
+```
+
+#### census_inc
+
+```{r}
+
+census_inc <- census %>%
+    filter(commodity == "INCOME, NET CASH FARM")
+
+# Splitting to finance metric and measurement
+
+census_inc <- census_inc %>%
+  separate_wider_delim(  cols = 'data_item',
+                         delim = " - ",
+                         names = c("finance metric", 
+                                   "measurement"
+                                               ),
+                         too_many = "error",
+                         too_few = "align_start"
+  )
+
+census_inc <- census_inc %>% drop_one_value_col()
+
+# Splitting measurement into metrx and unit
+
+census_inc <- census_inc %>%
+  separate_wider_delim(  cols = 'measurement',
+                         delim = ", ",
+                         names = c("metric", 
+                                   "unit"),
+                         too_many = "error",
+                         too_few = "align_start"
+  )
+
+# Checking unique values in finance metric
+unique(census_inc$`finance metric`)
+
+# Removing repetitive words and rename the column accordingly
+census_inc <- census_inc %>%
+  mutate(
+    `finance metric` = str_replace(`finance metric`, "INCOME, NET CASH FARM, OF ", "")
+  ) %>% 
+  rename(`finance entity` = `finance metric`)
+
+# Removing repetitive words
+census_inc <- census_inc %>%
+  mutate(
+    unit = str_replace(unit, "MEASURED IN", "")
+  ) 
+
+# Splitting domain_category into category and size range
+
+census_inc <- census_inc %>%
+  separate_wider_delim(  cols = 'domain_category',
+                         delim = ": ",
+                         names = c("category", 
+                                   "size range"),
+                         too_many = "error",
+                         too_few = "align_start"
+  )
+
+# Replacing "NOT SPECIFIED" with "TOTAL"
+census_inc$category <- str_replace(census_inc$category, "NOT SPECIFIED", "TOTAL")
+
+# Checking if domain and category are the same (element-wise) 
+all(census_inc$domain == census_inc$category, na.rm = TRUE)
+
+# Drop domain as domain and category contain the same information
+census_inc <- census_inc %>% select(-domain)
+
+# Removing parenthesis
+census_inc$`size range` <- gsub("[()]", "", census_inc$`size range`)
+
+census_inc
+```
+
+#### census_organic
+
+```{r}
+
+census_organic <- census %>%
+    filter(commodity == "STRAWBERRIES")
+
+census_organic <- census_organic %>% drop_one_value_col()
+
+census_organic <- census_organic |>
+  separate_wider_delim(  cols = `data_item`,
+                         delim = " - ",
+                         names = c("organic",
+                                 "metric description"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+census_organic <- census_organic |>
+  separate_wider_delim(  cols = `organic`,
+                         delim = ", ",
+                         names = c("fruit",
+                                 "organic",
+                                 "type"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+census_organic <- census_organic |>
+  separate_wider_delim(  cols = `metric description`,
+                         delim = ", ",
+                         names = c("metric",
+                                 "unit"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+# Removing repetitive words
+census_organic_cleaned <- census_organic %>%
+  mutate(
+    unit = str_replace(unit, "MEASURED IN ", "")
+  ) 
+
+census_organic <- census_organic_cleaned %>%
+  filter(is.na(type) | type != "PROCESSING")
+
+census_organic
+```
+
+#### census_processing
+
+```{r}
+census_processing <- census_organic_cleaned %>% 
+  filter(type == 'PROCESSING')
+
+census_processing
+```
+
+```{r}
+census_inc_fl <- census_inc %>%
+  filter(state == 'FLORIDA')
+census_inc_ca <- census_inc %>%
+  filter(state == 'CALIFORNIA')
+
+census_organic_fl <- census_organic %>%
+  filter(state == 'FLORIDA')
+census_organic_ca <- census_organic %>%
+  filter(state == 'CALIFORNIA')
+
+census_processing_fl <- census_processing %>%
+  filter(state == 'FLORIDA')
+census_processing_ca <- census_processing %>%
+  filter(state == 'CALIFORNIA')
+
+census_inc_fl
+census_inc_ca
+census_organic_fl
+census_organic_ca
+census_processing_fl
+census_processing_ca
+```
+
+#### survey
+
+```{r}
+survey <- strawb_cleaned %>%
+    filter(program == "SURVEY")
+
+survey <- drop_one_value_col(survey)
+survey <- survey %>% select(-`state_ansi`, -`week_ending`, -period)
+```
+
+```{r}
+survey <- strawb_cleaned %>%
+    filter(program == "SURVEY")
+
+survey <- drop_one_value_col(survey)
+survey <- survey %>% select(-`state_ansi`, -`week_ending`, -period)
+
+survey <- survey %>%  separate_wider_delim(cols = `data_item`,
+                                                delim = " - ",
+                                                names = c("fruit",
+                                                         "application"
+                                                         ),
+                                                too_many = "merge",
+                                                too_few = "align_start")
+                                                
+                                                  
+survey <- survey %>% separate_wider_delim(cols = "fruit", 
+                                                 delim = ", ",
+                                                 names = c("fruit",
+                                                           "type"),
+                                                 too_many = "merge",
+                                                 too_few = "align_start"
+                                                 )
+
+                                                  
+survey <- survey %>% separate_wider_delim(cols = "application", 
+                                                 delim = ", ",
+                                                 names = c("application",
+                                                           "measurement",
+                                                           "metric"),
+                                                 too_many = "merge",
+                                                 too_few = "align_start"
+                                                 )
+
+survey <- survey %>%
+  mutate(
+    measurement = str_replace(measurement, "MEASURED IN ", "")
+  ) 
+
+survey <- survey %>% separate_wider_delim(cols = "domain", 
+                                                 delim = ", ",
+                                                 names = c("chemical",
+                                                           "chemical type"),
+                                                 too_many = "merge",
+                                                 too_few = "align_start"
+                                            )
+
+survey_total <- survey |>  filter(chemical == "TOTAL")
+survey_chem <- survey |>  filter(chemical== "CHEMICAL")
+survey_fert <- survey |>  filter(chemical == "FERTILIZER")
+
+survey_total <- drop_one_value_col(survey_total)
+survey_chem <- drop_one_value_col(survey_chem)
+survey_fert <- drop_one_value_col(survey_fert)
+
+survey_total
+survey_chem
+survey_fert
+
+```
+
+#### survey_total
+
+```{r}
+unique(survey_total$application)
+
+survey_total <- survey_total %>%
+  rename(market = type)
+
+survey_total <- survey_total %>%
+  rename(action = application)
+
+survey_total
+```
+
+#### survey_chem
+
+```{r}
+survey_chem <- survey_chem |>  
+  separate_wider_delim(cols = 'domain_category',
+                      delim = ": ",
+                      names = c("chem",
+                                "chem_info"),
+                   too_many = "merge",
+                    too_few = "align_start")
+
+survey_chem$chem_info <- str_replace(survey_chem$'chem_info', "^\\(", "")
+survey_chem$chem_info <- str_replace(survey_chem$'chem_info', "\\)$", "")
+
+survey_chem <- survey_chem |>  
+  separate_wider_delim(cols = 'chem',
+                      delim = ", ",
+                      names = c("chem",
+                                "chem_type"),
+                   too_many = "merge",
+                    too_few = "align_start")
+
+survey_chem <- survey_chem |>
+          separate_wider_delim(cols = 'chem_type',
+                              delim = ", ",
+                              names = c("chemical",
+                                "chem_type2"),
+                           too_many = "merge",
+                            too_few = "align_start")
+
+survey_chem <- drop_one_value_col(survey_chem)
+
+all(survey_chem$'chemical type' == survey_chem$chem_type, na.rm = TRUE)
+
+survey_chem
+
+survey_chem <- survey_chem %>%
+  select(-chemical)
+
+survey_chem <- survey_chem |>  
+  separate_wider_delim(cols = chem_info,
+                      delim = " = ",
+                      names = c("chemical_name",
+                                "code"),
+                   too_many = "error",
+                    too_few = "align_start")
+
+survey_chem
+
+```
+
+#### survey_fert
+
+```{r}
+# Remove all "(" and ")"
+survey_fert$'domain_category' <- str_remove_all(survey_fert$'domain_category', "[()]")
+
+survey_fert <- survey_fert |>  
+  separate_wider_delim(cols = 'domain_category',
+                      delim = ": ",
+                      names = c("fertilizer",
+                                "fertilizer name"),
+                   too_many = "merge",
+                    too_few = "align_start")
+
+survey_fert <- drop_one_value_col(survey_fert)
+
+survey_fert
+```
+
+## Data Saves
+
+```{r}
+write.csv(census, file = "census_data.csv")
+write.csv(survey, file = "survey_data.csv")
+write.csv(census_inc, file = "census_income.csv")
+write.csv(census_organic, file = "census_organic.csv")
+write.csv(census_processing, file = "census_processing.csv")
+write.csv(survey_chem, file = "survey_chemical.csv")
+write.csv(survey_total, file = "survey_total.csv")
+write.csv(survey_fert, file = "survey_fert.csv")
+```
+
+## Part 2: Comparison of production and sales among three types of strawberries
+
+```{r}
+# Filter for California and Florida data
+ca_fl_data <- census_inc %>%
+  filter(state %in% c("CALIFORNIA", "FLORIDA"))
+
+ca_fl_data <- ca_fl_data %>%
+  mutate(
+    value = as.character(value),  # make sure it's a string
+    value = if_else(value %in% c("(D)", "D", "(Z)", "Z", "NA", ""), NA_character_, value),
+    value = str_replace_all(value, "[$,]", ""),  # remove $ and commas
+    value = as.numeric(value)  # finally convert to number
+  )
+
+ca_fl_data
+```
+
+#### Total Net Income in 2022
+
+```{r}
+# Step 1: Define custom formatting functions
+dollar_m <- label_dollar(scale = 1e-6, suffix = "M", accuracy = 0.1, big.mark = ",")
+percent <- label_percent(scale = 1, accuracy = 0.1)
+
+# Step 2: Build the formatted table with pretty numbers
+formatted_table <- tibble::tibble(
+  Metric = c("Value", "CV%"),
+  `CA_Producers` = c(
+    dollar_m(total_net_income$value_CALIFORNIA_PRODUCERS),
+    percent(total_net_income$cv_percent_CALIFORNIA_PRODUCERS)
+  ),
+  `CA_Operations` = c(
+    dollar_m(total_net_income$value_CALIFORNIA_OPERATIONS),
+    percent(total_net_income$cv_percent_CALIFORNIA_OPERATIONS)
+  ),
+  `FL_Producers` = c(
+    dollar_m(total_net_income$value_FLORIDA_PRODUCERS),
+    percent(total_net_income$cv_percent_FLORIDA_PRODUCERS)
+  ),
+  `FL_Operations` = c(
+    dollar_m(total_net_income$value_FLORIDA_OPERATIONS),
+    percent(total_net_income$cv_percent_FLORIDA_OPERATIONS)
+  )
+)
+
+# Step 3: Display nicely with kable
+formatted_table %>%
+  kbl(
+    caption = "Total Net Income Comparison (in Millions)",
+    col.names = c("Metric", "Producers", "Operations", "Producers", "Operations"),
+    align = "lcccc"
+  ) %>%
+  add_header_above(c(" " = 1, "California" = 2, "Florida" = 2)) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+
+
+```
+
+#### Average Net Income in 2022 by area cultivated
+
+##### Californina Average Net Income in 2022 by area cultivated
+
+```{r}
+
+census_inc_ca <- census_inc %>% 
+  filter(state == "CALIFORNIA")
+
+# Organic data are in 2021 and census_inc data are in 2022
+census_inc_op_ca <- census_inc_ca %>% 
+  filter(`finance entity` == "OPERATIONS")
+census_inc_pr_ca <- census_inc_ca %>% 
+  filter(`finance entity` == "PRODUCERS")
+  
+```
+
+```{r}
+library(readr)
+library(scales)
+
+netinc_area <- census_inc_op_ca |> filter(category == "AREA OPERATED")
+
+netinc_total <- census_inc_op_ca |> filter(metric =="NET INCOME" & category == "TOTAL")
+
+netinc_area <- netinc_area %>%
+  mutate(value = if_else(value %in% c("(D)", "D", "(Z)", "Z"), NA_character_, value),
+         cleaned_value = parse_number(value))
+
+a <- sum(parse_number(netinc_area$value))
+a
+
+format(a, big.mark=",")
+## millions
+format(round(a/1000000,1), big.mark=",")
+
+format(round(a/10^6,1), big.mark=",")
+
+dollar <- label_currency(a, 
+              accuracy = NULL,
+             scale = 1,
+             prefix = "$",
+             suffix = "",
+              big.mark = ",",
+             decimal.mark = ".",
+               trim = TRUE,
+            largest_with_fractional = 1e+05 )
+
+label_currency(accuracy=.01, 
+             scale_cut=cut_short_scale())(a)
+
+label_currency(accuracy=NULL, 
+             scale_cut=cut_long_scale())(a)
+```
+
+```{r}
+netinc_area$`size range` <- gsub("[()]", "", netinc_area$`size range`)
+netinc_area$`size range` <- gsub(" ACRES", "", netinc_area$`size range`)
+netinc_area$`size range` <- gsub(" OR ", " TO ", netinc_area$`size range`)
+
+netinc_area_1  <- netinc_area |>
+  separate_wider_delim(  cols = `size range`,
+                         delim = " TO ",
+                         names = c("lower", 
+                                   "upper"),
+                         too_many = "error",
+                         too_few = "align_start")
+
+netinc_area_1$lower <- parse_number(netinc_area_1$lower)
+
+netinc_area_1$upper <- parse_number(netinc_area_1$upper) |> round(0)
+
+netinc_area_1 <- netinc_area_1 |>arrange(lower)
+
+netinc_area_table <- netinc_area_1 |> select(lower, upper, cleaned_value, `cv_percent`)
+
+netinc_area_table$cleaned_value <- parse_number(as.character(netinc_area_table$cleaned_value))
+
+netinc_area_table |> kable()
+
+netinc_area_table |> kbl(caption = "Californina Average Net Income in 2022 by area cultivated  ") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+
+```
+
+##### Florida Average Net Income in 2022 by area cultivated
+
+```{r}
+census_inc_fl <- census_inc %>% 
+  filter(state == "FLORIDA")
+
+# Organic data are in 2021 and census_inc data are in 2022
+census_inc_op_fl <- census_inc_fl %>% 
+  filter(`finance entity` == "OPERATIONS")
+census_inc_pr_fl <- census_inc_fl %>% 
+  filter(`finance entity` == "PRODUCERS")
+
+census_inc_op_fl
+census_inc_pr_fl
+```
+
+```{r}
+library(readr)
+library(scales)
+
+netinc_area_fl <- census_inc_op_fl |> filter(category == "AREA OPERATED")
+
+netinc_total_fl <- census_inc_op_fl |> filter(metric =="NET INCOME" & category == "TOTAL")
+
+netinc_area_fl <- netinc_area_fl %>%
+  mutate(value = if_else(value %in% c("(D)", "D", "(Z)", "Z"), NA_character_, value),
+         cleaned_value = parse_number(value))
+
+a <- sum(parse_number(netinc_area_fl$value))
+a
+
+format(a, big.mark=",")
+## millions
+format(round(a/1000000,1), big.mark=",")
+
+format(round(a/10^6,1), big.mark=",")
+
+dollar <- label_currency(a, 
+              accuracy = NULL,
+             scale = 1,
+             prefix = "$",
+             suffix = "",
+              big.mark = ",",
+             decimal.mark = ".",
+               trim = TRUE,
+            largest_with_fractional = 1e+05 )
+
+label_currency(accuracy=.01, 
+             scale_cut=cut_short_scale())(a)
+
+label_currency(accuracy=NULL, 
+             scale_cut=cut_long_scale())(a)
+```
+
+```{r}
+netinc_area_fl$`size range` <- gsub("[()]", "", netinc_area_fl$`size range`)
+netinc_area_fl$`size range` <- gsub(" ACRES", "", netinc_area_fl$`size range`)
+netinc_area_fl$`size range` <- gsub(" OR ", " TO ", netinc_area_fl$`size range`)
+
+netinc_area_fl_1  <- netinc_area_fl |>
+  separate_wider_delim(  cols = `size range`,
+                         delim = " TO ",
+                         names = c("lower", 
+                                   "upper"),
+                         too_many = "error",
+                         too_few = "align_start")
+
+netinc_area_fl_1$lower <- parse_number(netinc_area_fl_1$lower)
+
+netinc_area_fl_1$upper <- parse_number(netinc_area_fl_1$upper) |> round(0)
+
+netinc_area_fl_1 <- netinc_area_fl_1 |>arrange(lower)
+
+netinc_area_table_fl <- netinc_area_fl_1 |> select(lower, upper, cleaned_value, `cv_percent`)
+
+netinc_area_table_fl$cleaned_value <- parse_number(as.character(netinc_area_table_fl$cleaned_value))
+
+netinc_area_table_fl |> kable()
+
+netinc_area_table_fl |> kbl(caption = "Californina Average Net Income in 2022 by area cultivated  ") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+
+```
+
+##### Visualization
+
+```{r}
+library(ggplot2)
+library(scales)
+
+netinc_area_table$State <- "CALIFORNIA"
+netinc_area_table_fl$State <- "FLORIDA"
+
+netinc_area_all <- bind_rows(netinc_area_table, netinc_area_table_fl)
+
+# 1. Bar Plot: Net income trend by area size for both California and Florida
+
+ggplot(netinc_area_all, aes(x = factor(lower), y = cleaned_value)) +
+  geom_col(fill = "steelblue") +
+  facet_wrap(~ State) +
+  labs(
+    title = "Net Income by Area Cultivated (2022)",
+    x = "Lower Bound of Area Range (Acres)",
+    y = "Net Income",
+    caption = "Source: USDA Census"
+  ) +
+  scale_y_continuous(labels = label_dollar(scale = 1e-6, suffix = "M")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# 2. Line Plot: Net income trend with area size for both California and Florida
+
+ggplot(netinc_area_all, aes(x = lower, y = cleaned_value)) +
+  geom_line(color = "darkgreen", size = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~ State) +
+  labs(
+    title = "Net Income by Area Cultivated (2022)",
+    x = "Lower Bound of Area Range (Acres)",
+    y = "Net Income",
+    caption = "Source: USDA Census"
+  ) +
+  scale_y_continuous(labels = label_dollar(scale = 1e-6, suffix = "M")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3. Error Bars: Add CV (%) as error bars
+netinc_area_all <- netinc_area_all %>%
+  mutate(
+    cv_frac = as.numeric(cv_percent) / 100,
+    ymin = cleaned_value * (1 - cv_frac),
+    ymax = cleaned_value * (1 + cv_frac)
+  )
+
+ggplot(netinc_area_all, aes(x = lower, y = cleaned_value)) +
+  geom_col(fill = "skyblue") +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 25, color = "black") +
+  facet_wrap(~ State) +
+  labs(
+    title = "Net Income by Area Cultivated (2022) with CV Error Bars",
+    x = "Lower Bound of Area (Acres)",
+    y = "Net Income",
+    caption = "Error bars represent ±CV% uncertainty"
+  ) +
+  scale_y_continuous(labels = label_dollar(scale = 1e-6, suffix = "M")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+#### Gain Vs. Loss Comparison
+
+```{r}
+# Step 1: Clean and prepare data
+gain_loss_summary <- ca_fl_data %>%
+  filter(metric %in% c("GAIN", "LOSS"),
+         category == "TOTAL",
+         `finance entity` == "OPERATIONS",  # or "PRODUCERS" if preferred
+         state %in% c("CALIFORNIA", "FLORIDA")) %>%
+  mutate(
+    value = as.character(value),
+    value = if_else(value %in% c("(D)", "D", "(Z)", "Z", "NA", ""), NA_character_, value),
+    value = parse_number(value)
+  )
+
+# Step 2: Summarize Gain and Loss, compute Net
+gain_loss_totals <- gain_loss_summary %>%
+  group_by(state, metric) %>%
+  summarise(total = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = metric, values_from = total) %>%
+  mutate(Net = GAIN - LOSS)
+
+# Step 3: Format numbers in billions
+format_billion <- label_dollar(scale = 1e-9, suffix = " billion", accuracy = 0.01, big.mark = ",")
+
+gain_loss_table <- tibble::tibble(
+  `Gain vs. Loss` = c("Total Gain", "Total Loss", "Net"),
+  California = c(
+    format_billion(gain_loss_totals$GAIN[gain_loss_totals$state == "CALIFORNIA"]),
+    format_billion(gain_loss_totals$LOSS[gain_loss_totals$state == "CALIFORNIA"]),
+    format_billion(gain_loss_totals$Net[gain_loss_totals$state == "CALIFORNIA"])
+  ),
+  Florida = c(
+    format_billion(gain_loss_totals$GAIN[gain_loss_totals$state == "FLORIDA"]),
+    format_billion(gain_loss_totals$LOSS[gain_loss_totals$state == "FLORIDA"]),
+    format_billion(gain_loss_totals$Net[gain_loss_totals$state == "FLORIDA"])
+  )
+)
+
+
+# Summarize gain/loss in billions
+gain_loss_plot_data <- gain_loss_summary %>%
+  group_by(state, metric) %>%
+  summarise(total_billion = sum(value, na.rm = TRUE) / 1e9, .groups = "drop") %>%
+  mutate(direction = ifelse(metric == "LOSS", -total_billion, total_billion))  # negative for losses
+
+
+# Step 4: Display with kable
+gain_loss_table %>%
+  kbl(caption = "Gain vs. Loss Comparison by State (in Billions)", align = "lcc") %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+
+ggplot(gain_loss_plot_data, aes(x = metric, y = direction, fill = state)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  scale_y_continuous(labels = label_dollar(suffix = "B")) +
+  labs(
+    title = "Gain vs. Loss by State (Bidirectional)",
+    x = NULL,
+    y = "Amount (in Billions)",
+    fill = "State"
+  ) +
+  scale_fill_manual(values = c("CALIFORNIA" = "#1f77b4", "FLORIDA" = "#ff7f0e")) +
+  theme_minimal(base_size = 14)
+```
+
+#### Net Income by Economic Class Range
+
+```{r}
+# Economic Class Analysis with Range Separatio
+economic_class_ranges <- ca_fl_data %>%
+  filter(metric == "NET INCOME", 
+         category == "ECONOMIC CLASS") %>%
+  mutate(
+    # Clean the size range text
+    `size range` = gsub("[\\$,]", "", `size range`),  # Remove $ and commas
+    `size range` = gsub(" OR MORE", " TO Inf", `size range`),
+    `size range` = gsub("LESS THAN ", "0 TO ", `size range`)
+  ) %>%
+  separate_wider_delim(
+    cols = `size range`,
+    delim = " TO ",
+    names = c("lower", "upper"),
+    too_many = "merge",
+    too_few = "align_start"
+  ) %>%
+  mutate(
+    lower = parse_number(lower),
+    upper = parse_number(upper),
+    upper = ifelse(is.na(upper), Inf, upper)  # Handle "OR MORE" cases
+  ) %>%
+  select(state, `finance entity`, lower, upper, value, cv_percent) %>%
+  arrange(state, `finance entity`, lower)
+
+# Format for display
+economic_class_ranges %>%
+  filter(state == "CALIFORNIA", `finance entity` == "OPERATIONS") %>%
+  select(-`finance entity`) %>%
+  mutate(
+    value = scales::dollar(value),
+    cv_percent = paste0(cv_percent, "%")
+  ) %>%
+  kbl(
+    caption = "CALIFORNIA Net Income by Economic Class Range (2022)",
+    col.names = c("State", "Lower ($)", "Upper ($)", "Net Income", "CV%"),
+    align = c("l", "r", "r", "r", "r")
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria") %>%
+  add_header_above(c(" " = 1, "Income Range" = 2, " " = 2))
+
+# Format for display
+economic_class_ranges %>%
+  filter(state == "FLORIDA", `finance entity` == "OPERATIONS") %>%
+  select(-`finance entity`) %>%
+  mutate(
+    value = scales::dollar(value),
+    cv_percent = paste0(cv_percent, "%")
+  ) %>%
+  kbl(
+    caption = "FLORIDA Net Income by Economic Class Range (2022)",
+    col.names = c("State", "Lower ($)", "Upper ($)", "Net Income", "CV%"),
+    align = c("l", "r", "r", "r", "r")
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria") %>%
+  add_header_above(c(" " = 1, "Income Range" = 2, " " = 2))
+
+# Create normal bar graph (non-bidirectional)
+ggplot(econ_class_plot, 
+       aes(x = income_range, 
+           y = value_billion, 
+           fill = state)) +
+  geom_bar(stat = "identity", 
+           position = position_dodge(width = 0.8),
+           width = 0.7) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.5) +
+  scale_y_continuous(labels = scales::dollar_format(suffix = "B"),
+                     breaks = pretty_breaks(n = 8)) +
+  scale_fill_manual(values = c("CALIFORNIA" = "#1f77b4", "FLORIDA" = "#ff7f0e")) +
+  coord_flip() +  # Makes it horizontal
+  labs(
+    title = "Net Income by Economic Class (2022)",
+    subtitle = "California vs Florida Comparison",
+    x = "Economic Class Range ($)",
+    y = "Net Income (Billions)",
+    fill = "State",
+    caption = "Data Source: USDA Census"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 11),
+    plot.caption = element_text(color = "gray50")
+  )
+
+
+```
+
+#### Net Income by Farm Sales Range
+
+```{r}
+# Farm Sales Categories with Range Separation ----
+farm_sales_ranges <- ca_fl_data %>%
+  filter(metric == "NET INCOME", 
+         category == "FARM SALES") %>%
+  mutate(
+    `size range` = gsub("[\\$,]", "", `size range`),
+    `size range` = gsub(" OR MORE", " TO Inf", `size range`),
+    `size range` = gsub("LESS THAN ", "0 TO ", `size range`)
+  ) %>%
+  separate_wider_delim(
+    cols = `size range`,
+    delim = " TO ",
+    names = c("lower", "upper"),
+    too_many = "merge",
+    too_few = "align_start"
+  ) %>%
+  mutate(
+    lower = parse_number(lower),
+    upper = parse_number(upper),
+    upper = ifelse(is.na(upper), Inf, upper)
+  ) %>%
+  select(state, `finance entity`, lower, upper, value, cv_percent) %>%
+  arrange(state, `finance entity`, lower)
+
+# Format for display - California Focus
+farm_sales_ranges %>%
+  filter(state == "CALIFORNIA", `finance entity` == "OPERATIONS") %>%
+  select(-state, -`finance entity`) %>%
+  mutate(
+    value = scales::dollar(value),
+    cv_percent = paste0(cv_percent, "%"),
+    upper = ifelse(is.infinite(upper), "∞", as.character(upper))  # Handle Inf
+  ) %>%
+  kbl(
+    caption = "California Net Income by Farm Sales Range (2022)",
+    col.names = c("Lower ($)", "Upper ($)", "Net Income", "CV%"),
+    align = c("r", "r", "r", "r")
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria") %>%
+  add_header_above(c("Sales Range" = 2, " " = 2))
+
+# Format for display - Florida Focus
+farm_sales_ranges %>%
+  filter(state == "FLORIDA", `finance entity` == "OPERATIONS") %>%
+  select(-state, -`finance entity`) %>%
+  mutate(
+    value = scales::dollar(value),
+    cv_percent = paste0(cv_percent, "%"),
+    upper = ifelse(is.infinite(upper), "∞", as.character(upper))  # Handle Inf
+  ) %>%
+  kbl(
+    caption = "FLORIDA Net Income by Farm Sales Range (2022)",
+    col.names = c("Lower ($)", "Upper ($)", "Net Income", "CV%"),
+    align = c("r", "r", "r", "r")
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria") %>%
+  add_header_above(c("Sales Range" = 2, " " = 2))
+```
+
+#### Organic Strawberries
+
+```{r}
+census_organic <- census_organic %>%
+  mutate(
+    value = as.character(value),
+    value = if_else(value %in% c("(D)", "D", "(Z)", "Z", "NA", ""), NA_character_, value),
+    value = str_replace_all(value, "[$,]", ""),  # remove $ and commas
+    value = as.numeric(value)  # finally convert to number
+  )
+```
+
+```{r}
+# Create comparison table
+comparison_table <- census_organic %>%
+  filter(state %in% c("CALIFORNIA", "FLORIDA")) %>%
+  filter(metric %in% c("ACRES HARVESTED", "SALES")) %>%
+  select(state, metric, unit, value) %>%
+  # Handle cases where multiple rows exist for same metric
+  group_by(state, metric, unit) %>%
+  summarize(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  # Reshape to wide format
+  pivot_wider(
+    names_from = c(metric, unit),
+    values_from = value,
+    names_sep = " "
+  ) %>%
+  # Clean up column names and add calculated metrics
+  rename(
+    "Acres Harvested" = "ACRES HARVESTED NA",
+    "Sales ($)" = "SALES $",
+    "Sales (CWT)" = "SALES CWT"
+  )
+# Format the table for better readability
+formatted_table <- comparison_table %>%
+  mutate(across(where(is.numeric), ~round(., 2))) 
+
+# Display the table
+kable(formatted_table, caption = "Organic Strawberry Production Comparison: California vs Florida") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+#### Strawberries for Processing
+
+```{r}
+census_processing_all <- census_processing %>%
+  filter(state %in% c('CALIFORNIA', 'FLORIDA'))
+
+census_processing_all
+```

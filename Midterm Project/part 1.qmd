@@ -1,0 +1,748 @@
+---
+title: "Part 1"
+execute:
+  echo: false
+format: html
+editor: visual
+author: Yijun Kim
+---
+
+# Part 1: Exploration of Chemicals
+
+------------------------------------------------------------------------
+
+## Libraries
+
+```{r}
+#| label: load libraries
+#| warning: false
+#| message: false
+
+library(readr)
+library(knitr)  
+library(kableExtra)
+library(tidyverse)
+library(stringr)
+library(magrittr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(janitor)
+```
+
+## Read the file
+
+```{r}
+strawb <- read_csv("strawberries25_v3.csv") %>% clean_names()
+
+glimpse(strawb)
+summary(strawb)
+colnames(strawb)
+```
+
+## Data Description
+
+The data originally consisted of 12669 rows and 21 columns.
+
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Column Name      | Description                                                                                                                                                                                          |
++==================+======================================================================================================================================================================================================+
+| program          | How the data was collected — `"SURVEY"` (sample-based) or `"CENSUS"` (population-wide)                                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| year             | The year the data was collected                                                                                                                                                                      |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| period           | Rhe time period for the data (e.g., `"YEAR"`, `"MARKETING YEAR"`, or specific months/quarters). For annual data, this is just `"YEAR"`                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| week_ending      | The specific date marking the end of a reporting week. Often `NA` for annual/census data.                                                                                                            |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| geo_level        | The geographic resolution of the observation — `"STATE"`, `"COUNTY"`, or `"DISTRICT"`                                                                                                                |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| state            | The U.S. state                                                                                                                                                                                       |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| state_ansi       | A numeric code assigned to each U.S. state                                                                                                                                                           |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ag_district      | USDA-defined Agricultural District name                                                                                                                                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ag_district_code | A numeric or letter code assigned to each agricultural district within a state                                                                                                                       |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| county           | The county within U.S. state                                                                                                                                                                         |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| county_ansi      | A 3-digit code for each county within a state. A unique identifier for any U.S. county if combined with `State ANSI`                                                                                 |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| zip_code         | ZIP code of the reporting location                                                                                                                                                                   |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| region           | Regions that group multiple states or counties; often empty or NA for state-level or county-level data                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| watershed_code   | A standardized hydrologic unit code (HUC) for watersheds                                                                                                                                             |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| watershed        | The actual name or label of the watershed                                                                                                                                                            |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| commodity        | The crop being reported; in this dataset, it is always `"STRAWBERRIES"`                                                                                                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| data_item        | A compound descriptor that includes                                                                                                                                                                  |
+|                  |                                                                                                                                                                                                      |
+|                  | 1.  What crop is being measured (always strawberries in this databset)                                                                                                                               |
+|                  | 2.  What aspect is being measured (sales, acres, price, production, etc.),                                                                                                                           |
+|                  | 3.  Measurement unit (e.g., “MEASURED IN \$”),                                                                                                                                                       |
+|                  | 4.  Whether it’s organic, fresh market, or processing.                                                                                                                                               |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| domain           | A subcategory that breaks down the data by chemical used, type of farming (`“ORGANIC”`, `"FERTILIZER"`, `"CHEMICAL"`), or `"TOTAL"`. Often shows the chemical name if domain_category is “CHEMICAL”. |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| domain_category  | The category of the domain — e.g., `"CHEMICAL"`, `"ORGANIC"`, `"FERTILIZER"`, etc. `"CHEMICAL"` and `"FERTILIZER"` usage indicates conventional farming                                              |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| value            | The numerical measurement — could be pounds of chemical, dollars in sales, price per cwt, etc., depending on the type_of_measurement.                                                                |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| cv_percent       | Coefficient of Variation — a measure of data reliability or variability.                                                                                                                             |
++------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+## Data Cleaning
+
+### Remove columns with a single value in all columns
+
+```{r}
+remove_single_value_columns <- function(df) {
+  df %>%
+    select(where(~ n_distinct(.) > 1))
+}
+```
+
+```{r}
+strawb_cleaned <- remove_single_value_columns(strawb)
+
+# Checking which columns are dropped
+removed_columns <- setdiff(names(strawb), names(strawb_cleaned))
+print(removed_columns)
+```
+
+### Remove rows with `COUNTY` in `GEO LEVEL`
+
+```{r}
+strawb_cleaned <- strawb_cleaned %>%
+  filter(geo_level != "COUNTY")
+
+unique(strawb_cleaned$geo_level)
+```
+
+### Splitting data into smaller data sets
+
+The Strawberry data set is split into two smaller sets according to which program is used to collect the data: `census` and `survey`.
+
+#### census
+
+```{r}
+# Census using the code from the class
+census <- strawb_cleaned %>%
+    filter(program == "CENSUS")
+
+census <- drop_one_value_col(census)
+
+census <- census |>
+  separate_wider_delim(  cols = `data_item`,
+                         delim = " - ",
+                         names = c("fruit",
+                                 "category"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+census <- census |>
+  separate_wider_delim(  cols = fruit,
+                         delim = ", ",
+                         names = c("fruit",
+                                 "organic",
+                                 "organic_detail"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+
+census
+
+```
+
+#### census_organic
+
+```{r}
+census_organic <- census %>%
+    filter(organic == "ORGANIC")
+census_organic <- drop_one_value_col(census_organic)
+
+census_organic <- census_organic |>
+  separate_wider_delim(  cols = category,
+                         delim = ", ",
+                         names = c("measure",
+                                 "unit"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+census_organic$`measure` <- str_replace(census_organic$`measure`, "WITH ", ",")
+
+census_organic <- census_organic %>% separate_wider_delim(  cols = `measure`,
+                                  delim = ",",
+                                  names = c("measure1",
+                                            "measure2"),
+                                            too_many = "merge",
+                                            too_few = "align_start"
+                                            )
+
+census_organic
+```
+
+#### census_non_organic
+
+```{r}
+census_non_organic <- census %>%
+  filter(is.na(organic))
+census_non_organic <- drop_one_value_col(census_non_organic)
+
+census_non_organic
+```
+
+#### census_processing
+
+```{r}
+census_organic
+census_processing <- census_organic %>%
+    filter(organic_detail == "PROCESSING")
+
+census_processing_ca <- census_processing %>%
+    filter(state == "CALIFORNIA")
+
+census_processing_fl <- census_processing %>%
+    filter(state == "FLORIDA")
+
+census_processing_ca
+census_processing_fl
+```
+
+```{r}
+census <- census[(is.na(census$organic)),]
+census <- census |> drop_one_value_col()
+
+census <- census %>% 
+      separate_wider_delim(  cols = `category`,
+                             delim = " ",
+                             names = c("measure",
+                                        "bearing Type"),
+                                        too_many = "merge",
+                                        too_few = "align_start"
+                                       )
+
+census$`bearing Type` <- str_replace(census$`bearing Type`, "WITH ", "")
+
+census <- census |> rename(size_range = `domain_category`)
+
+census$size_range <- str_replace(census$size_range, "NOT SPECIFIED", "TOTAL")
+census$size_range <- str_replace(census$size_range, "AREA GROWN: ", "")
+
+census
+```
+
+#### census_total & census_fl_ca
+
+```{r}
+# census in Florida & California
+census_total <- census %>%
+    filter(geo_level == "NATIONAL")
+
+census_total
+
+census_fl_ca <- census %>%
+    filter(state %in% c("FLORIDA", "CALIFORNIA")) %>% remove_single_value_columns() 
+
+census_fl_ca
+```
+
+#### census_organic_total & census_organic_fl_ca
+
+```{r}
+# census_organic in Florida & California
+
+census_organic_total <- census_organic %>%
+    filter(geo_level == "NATIONAL")
+
+census_organic_total
+
+census_organic_fl_ca <- census_organic %>%
+    filter(state %in% c("FLORIDA", "CALIFORNIA")) %>% remove_single_value_columns()
+
+census_organic_fl_ca
+```
+
+#### survey
+
+```{r}
+# Fixing misplaced values
+
+shift_loc <- function(df, col_name, dat_name, num_col, num_shift){
+ # browser()
+  col_num = which(colnames(df) == col_name)
+  row_num = which(df[,col_num] == dat_name)  ## calcs a vector of rows
+  
+  for(k in 1:length(row_num)){
+  d = rep(0,num_col) ## storage for items to be moved
+  for(i in 1:num_col){
+    d[i] = df[row_num[k], col_num + i - 1]
+  }
+  for(i in 1:num_col){
+    ra = row_num[k]
+    cb = col_num + i - 1
+    df[ra, cb] <-  NA
+  }
+  for(j in 1:num_col){
+    rc = row_num[k]
+    cd = col_num + j - 1 + num_shift
+    df[rc, cd] = d[j]
+  }
+  }
+ # sprintf("Rows adjusted:")
+  # print("%d",row_num)
+  return(df)
+}
+```
+
+```{r}
+survey <- strawb_cleaned %>%
+    filter(program == "SURVEY")
+
+survey <- drop_one_value_col(survey)
+
+survey <- survey %>%  separate_wider_delim(cols = `data_item`,
+                                                delim = ", ",
+                                                names = c("fruit",
+                                                         "category",
+                                                         "measure",
+                                                         "metric"
+                                                         ),
+                                                too_many = "merge",
+                                                too_few = "align_start")
+                                                
+                                                  
+survey <- survey %>% separate_wider_delim(cols = "fruit", 
+                                                 delim = " - ",
+                                                 names = c("fruit",
+                                                           "application"),
+                                                 too_many = "merge",
+                                                 too_few = "align_start"
+                                                 )
+```
+
+```{r}
+survey %<>% shift_loc("application", "PRICE RECEIVED", 2, 1 )
+
+survey %<>% shift_loc("application", "ACRES HARVESTED", 1, 1 )
+
+survey %<>% shift_loc("application", "ACRES PLANTED", 1, 1 )
+
+survey %<>% shift_loc("application", "PRODUCTION", 2, 1 )
+
+survey %<>% shift_loc("application", "YIELD", 2, 1 )
+
+survey %<>% shift_loc("application", "APPLICATIONS", 3, 1 )
+
+survey %<>% shift_loc("application", "TREATED", 3, 1 )
+
+```
+
+```{r}
+survey %<>% drop_one_value_col()
+
+survey <- survey |>  
+  separate_wider_delim(cols = domain,
+                      delim = ", ",
+                      names = c("chemical",
+                                "type"),
+                                                
+                      too_many = "merge",
+                      too_few = "align_start")
+survey_total <- survey |>  filter(chemical == "TOTAL")
+survey_chem <- survey |>  filter(chemical== "CHEMICAL")
+survey_fert <- survey |>  filter(chemical == "FERTILIZER")
+```
+
+#### survey_total
+
+```{r}
+survey_total %<>% drop_one_value_col()
+
+### align terms
+
+survey_total %<>% shift_loc("measure", "MEASURED IN $ / CWT", 1, 1 )
+
+survey_total %<>% shift_loc("measure", "MEASURED IN $", 1, 1 )
+
+survey_total %<>% shift_loc("measure", "MEASURED IN CWT", 1, 1 )
+
+survey_total %<>% shift_loc("measure", "MEASURED IN TONS", 1, 1 )
+
+survey_total %<>% shift_loc("measure", "MEASURED IN CWT / ACRE", 1, 1 )
+
+survey_total %<>% shift_loc("measure", "MEASURED IN TONS / ACRE", 1, 1 )
+
+survey_total <- survey_total |>  
+  separate_wider_delim(cols = category,
+                      delim = " - ",
+                      names = c("market",
+                                "action"),
+                   too_many = "merge",
+                    too_few = "align_start")
+```
+
+```{r}
+survey_total %<>%
+  select(-`state_ansi`)
+survey_total <-  survey_total |>
+  shift_loc("market", "PRODUCTION", 2, 1)
+
+survey_total <-  survey_total |>
+  shift_loc("market", "PRICE RECEIVED", 2, 1)
+```
+
+#### survey_chem
+
+```{r}
+survey_chem <- survey_chem |> drop_one_value_col()
+
+survey_chem <- survey_chem |> select(-`state_ansi`)
+
+survey_chem <- survey_chem |>  
+  separate_wider_delim(cols = category,
+                      delim = " - ",
+                      names = c("cat1",
+                                "cat2"),
+                   too_many = "merge",
+                    too_few = "align_start")
+survey_chem$measure <- str_replace(survey_chem$measure, "MEASURED IN ", "")
+
+survey_chem$domain_category <- str_replace(survey_chem$domain_category, "CHEMICAL, ", "")
+
+survey_chem <- survey_chem |>
+          separate_wider_delim(cols = domain_category,
+                              delim = ": ",
+                              names = c("chemical_type",
+                                "chemical_name"),
+                           too_many = "merge",
+                            too_few = "align_start")
+
+survey_chem <- survey_chem |> select(-type)
+  
+survey_chem$chemical_name <- str_replace(survey_chem$chemical_name, "^\\(", "")
+  
+survey_chem$chemical_name <- str_replace(survey_chem$chemical_name, "\\)$", "")
+  
+survey_chem <- survey_chem |>  
+  separate_wider_delim(cols = chemical_name,
+                      delim = " = ",
+                      names = c("chemical_name",
+                                "code"),
+                   too_many = "error",
+                    too_few = "align_start")
+
+survey_chem <- survey_chem %>%
+  filter(state %in% c("CALIFORNIA", "FLORIDA"))
+```
+
+#### survey_fert
+
+```{r}
+survey_fert <- survey_fert |> drop_one_value_col()
+
+survey_fert <- survey_fert |> select(-`state_ansi`)
+
+survey_fert <- survey_fert |>  
+  separate_wider_delim(cols = category,
+                      delim = " - ",
+                      names = c("cat1",
+                                "cat2"),
+                   too_many = "merge",
+                    too_few = "align_start")
+                
+survey_fert$measure <- str_replace(survey_fert$measure, "MEASURED IN ", "")
+
+survey_fert$domain_category <- str_replace(survey_fert$domain_category, "CHEMICAL, ", "")
+
+survey_fert <- survey_fert |>
+          separate_wider_delim(cols = domain_category,
+                              delim = ": ",
+                              names = c("chemical_type",
+                                "chemical_name"),
+                           too_many = "merge",
+                            too_few = "align_start")
+  
+survey_fert$chemical_name <- str_replace(survey_fert$chemical_name, "^\\(", "")
+  
+survey_fert$chemical_name <- str_replace(survey_fert$chemical_name, "\\)$", "")
+   
+survey_fert <- survey_fert |> drop_one_value_col()
+
+survey_fert
+```
+
+### Data Save
+
+```{r}
+write.csv(census, file = "census_data.csv")
+write.csv(survey, file = "survey_data.csv")
+write.csv(census_organic, file = "census_organic")
+write.csv(census_non_organic, file = "census_non_organic.csv")
+write.csv(survey_chem, file = "survey_chemical.csv")
+write.csv(survey_total, file = "survey_total.csv")
+write.csv(survey_fert, file = "survey_fert.csv")
+write.csv(census_fl_ca, file = "census_fl_ca.csv")
+write.csv(census_organic_total, file = "census_organic_total.csv")
+write.csv(census_organic_fl_ca, file = "census_organic_fl_ca.csv")
+write.csv(census_processing, file = "census_processing.csv")
+```
+
+## Part 1: Exploration of Chemical Usage
+
+```{r}
+# Convert 'value' to numeric 
+survey_chem <- survey_chem %>% 
+  mutate(value = as.numeric(value))
+
+# Create a new column 'measure_category' using cat1 if it contains the category names
+# ("APPLICATIONS" or "TREATED"); otherwise, use cat2. Then, drop the unnecessary columns
+chem_usage_summary <- survey_chem %>%
+  # Filter for rows that have either APPLICATIONS or TREATED in cat1 or cat2
+  filter(cat1 %in% c("APPLICATIONS", "TREATED") | cat2 %in% c("APPLICATIONS", "TREATED")) %>%
+  # Create a column 'measure_category' based on cat1 or cat2
+  mutate(measure_category = ifelse(cat1 %in% c("APPLICATIONS", "TREATED"), 
+                                   cat1, 
+                                   cat2)) %>%
+  subset(select = -c(cat1, cat2, code))
+
+chem_usage_summary
+
+# Summarize total usage measued in LB for each chemical by state
+chem_usage_by_state <- chem_usage_summary %>% 
+  filter(measure == "LB") %>%
+  group_by(state, chemical_name) %>% 
+  summarise(total_usage = sum(value, na.rm = TRUE), .groups = "drop")
+
+chem_usage_by_state
+
+# Pivot the data to have separate columns for CALIFORNIA and FLORIDA, and then exclude rows where usage is 0 in either state.
+chem_usage_wide <- chem_usage_by_state %>% 
+  pivot_wider(names_from = state, values_from = total_usage) %>%
+  filter(chemical_name != "TOTAL") %>%
+  filter(!is.na(CALIFORNIA) & !is.na(FLORIDA)) %>% 
+  filter(CALIFORNIA != 0, FLORIDA != 0) %>% 
+  # Compute the difference (FL usage minus CA usage) and ratio
+  mutate(diff = FLORIDA - CALIFORNIA,
+         ratio = FLORIDA / CALIFORNIA)
+
+# Find the chemical where Florida usage is much higher than California (highest ratio)
+fl_dominant <- chem_usage_wide %>% 
+  arrange(desc(ratio)) %>% 
+  slice(1)
+
+# Find the chemical where California usage is much higher than Florida (lowest ratio)
+ca_dominant <- chem_usage_wide %>% 
+  arrange(ratio) %>% 
+  slice(1)
+
+# Find the chemical with similar usage in both states
+similar_chemical <- chem_usage_wide %>%
+  mutate(similarity = abs(ratio - 1)) %>%
+  arrange(similarity) %>%
+  slice(1)
+
+chem_usage_wide
+
+fl_dominant <- fl_dominant$chemical_name 
+ca_dominant <- ca_dominant$chemical_name
+similar_chemical <- similar_chemical$chemical_name
+
+target_chemicals <- c(fl_dominant, ca_dominant, similar_chemical)
+target_chemicals
+```
+
+```{r}
+# Select the rows with APPLICATIONS
+target_applications <- chem_usage_summary %>%
+  filter(measure_category %in% "APPLICATIONS",
+         chemical_name %in% target_chemicals) %>%
+  arrange(chemical_name, state)
+
+# 1. Bar Chart: Total Usage (measured in LB) for Target Chemicals
+total_usage_lb <- target_applications %>%
+  filter(measure == "LB") %>%
+  group_by(state, chemical_name) %>%
+  summarise(total_usage_lb = sum(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(total_usage_lb, aes(x = chemical_name, y = total_usage_lb, fill = state)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Total Usage (LB) for Target Chemicals by State",
+       x = "Chemical",
+       y = "LB") +
+  theme_minimal()
+
+ggsave('total_usage_lb.png')
+
+# 2. Bar Chart: Rate of Chemical Use per Acre per Application (measured in "LB / ACRE / APPLICATION")
+rate_lb_per_acre_app <- target_applications %>%
+  filter(measure == "LB / ACRE / APPLICATION") %>%
+  group_by(state, chemical_name) %>%
+  summarise(rate = mean(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(rate_lb_per_acre_app, aes(x = chemical_name, y = rate, fill = state)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Rate of Chemical Use (LB/ACRE/APPLICATION) by State",
+       x = "Chemical",
+       y = "LB/ACRE/APPLICATION") +
+  theme_minimal()
+ggsave('rate_lb_per_acre_app.png')
+
+# 3. Time Series Plot: Rate of Chemical Use per Acre per Year (measured in "LB / ACRE / YEAR")
+ts_lb_per_acre_year <- target_applications %>%
+  filter(measure == "LB / ACRE / YEAR") %>%
+  group_by(year, state, chemical_name) %>%
+  summarise(rate_year = mean(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(ts_lb_per_acre_year, aes(x = year, y = rate_year, color = state)) +
+  geom_line(size = 1) +
+  geom_point() +
+  facet_wrap(~ chemical_name, scales = "free_y") +
+  labs(title = "Yearly Rate of Chemical Use (LB/ACRE/YEAR) for Target Chemicals",
+       x = "Year",
+       y = "LB/ACRE/YEAR") +
+  theme_minimal()
+ggsave('ts_lb_per_acre_year.png')
+
+# 4. Bar Chart: Average Number of Applications (measured in "NUMBER")
+avg_applications <- target_applications %>%
+  filter(measure == "NUMBER") %>%
+  group_by(state, chemical_name) %>%
+  summarise(avg_num_applications = mean(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(avg_applications, aes(x = chemical_name, y = avg_num_applications, fill = state)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Average Number of Applications for Target Chemicals",
+       x = "Chemical",
+       y = "Average Number of Applications") +
+  theme_minimal()
+ggsave('avg_applications.png')
+```
+
+```{r}
+# 1. Pie Chart: Percentage for Target Chemicals out of all insecticides used in Florida
+
+# Total insecticide usage in FL
+total_insecticide_FL <- chem_usage_summary %>% 
+  filter(state == "FLORIDA",
+         chemical_type == "INSECTICIDE",
+         measure == "LB",
+         measure_category == "APPLICATIONS") %>%
+  summarise(total_usage = sum(value, na.rm = TRUE)) %>%
+  pull(total_usage)
+
+# Total usage for target chemicals in FL
+target_usage_FL <- target_applications %>%
+  filter(state == "FLORIDA",
+         chemical_type == "INSECTICIDE",
+         measure == "LB") %>%
+  group_by(chemical_name) %>%
+  summarise(total_usage = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(percentage = total_usage / total_insecticide_FL * 100)
+
+# Total usage for 'other' chemicals in FL
+other_total <- total_insecticide_FL - sum(target_usage_FL$total_usage)
+
+include_other_FL <- target_usage_FL %>% 
+  add_row(chemical_name = "Other", 
+          total_usage = other_total,
+          percentage = other_total / total_insecticide_FL * 100)
+
+# Pie chart for Florida
+ggplot(include_other_FL, aes(x = "", y = percentage, fill = factor(chemical_name, levels = c(target_chemicals, "Other")))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(title = "Target Insecticides as % of All Insecticides (FL)",
+       fill = "Chemical") +
+  theme_void()
+
+ggsave('insecticides_fl.png')
+
+```
+
+```{r}
+# 2. Pie Chart: Percentage for Target Chemicals out of all insecticides used in California
+
+# Total insecticide usage in CA
+total_insecticide_CA <- chem_usage_summary %>% 
+  filter(state == "CALIFORNIA",
+         chemical_type == "INSECTICIDE",
+         measure == "LB",
+         measure_category == "APPLICATIONS") %>%
+  summarise(total_usage = sum(value, na.rm = TRUE)) %>%
+  pull(total_usage)
+
+# Total usage for target chemicals in CA
+target_usage_CA <- target_applications %>%
+  filter(state == "CALIFORNIA",
+         chemical_type == "INSECTICIDE",
+         measure == "LB") %>%
+  group_by(chemical_name) %>%
+  summarise(total_usage = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(percentage = total_usage / total_insecticide_CA * 100)
+
+# Total usage for 'other' chemicals in FL
+other_total <- total_insecticide_CA - sum(target_usage_CA$total_usage)
+
+include_other_CA <- target_usage_CA %>% 
+  add_row(chemical_name = "Other", 
+          total_usage = other_total,
+          percentage = other_total / total_insecticide_CA * 100)
+
+include_other_CA
+
+# Pie chart for California
+ggplot(include_other_CA, aes(x = "", y = percentage, fill = factor(chemical_name, levels = c(target_chemicals, "Other")))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  labs(title = "Target Insecticides as % of All Insecticides (CA)",
+       fill = "Chemical") +
+  theme_void()
+
+# Display the table for CA
+knitr::kable(include_other_CA, caption = "Target Chemical Usage Percentage in CA")
+
+ggsave('insecticides_ca.png')
+
+```
+
+```{r}
+# 3. Grouped bar chart for FL and CA target percentages
+
+# The total insecticide usage for each state
+total_insecticide_state <- chem_usage_summary %>% 
+  filter(state %in% c("CALIFORNIA", "FLORIDA"),
+         chemical_type == "INSECTICIDE",
+         measure == "LB",
+         measure_category == "APPLICATIONS") %>%
+  group_by(state) %>%
+  summarise(total_usage_state = sum(value, na.rm = TRUE), .groups = "drop")
+
+# Target chemical usage per state
+target_usage_state <- target_applications %>%
+  filter(state %in% c("CALIFORNIA", "FLORIDA"),
+         chemical_type == "INSECTICIDE",
+         measure == "LB") %>%
+  group_by(state, chemical_name) %>%
+  summarise(total_usage = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  left_join(total_insecticide_state, by = "state") %>%
+  mutate(percentage = total_usage / total_usage_state * 100)
+
+# Grouped bar chart to contrast percentages between FL and CA
+ggplot(target_usage_state, aes(x = state, y = percentage, fill = chemical_name)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Contrast of Target Chemical Usage Percentages by State",
+       x = "State",
+       y = "Percentage (%)",
+       fill = "Chemical") +
+  theme_minimal()
+
+ggsave('chem_usage_state.png')
+```
